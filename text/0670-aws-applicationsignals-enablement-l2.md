@@ -18,16 +18,18 @@ extend support to other platforms in the future.
 
 ### README
 
-#### ApplicationSignalsTaskDefinition
+#### ApplicationSignalsIntegration
 
-`ApplicationSignalsTaskDefinition` is a construct to update an existing TaskDefinition with Application Signals auto-instrumentation configurations,
+`ApplicationSignalsIntegration` is a construct to update an existing TaskDefinition with Application Signals auto-instrumentation configurations,
 and attach required IAM permission **CloudWatchAgentServerPolicy** to the Task role, mentioned in the [ECS onboarding guidance](https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/CloudWatch-Application-Signals-ECS-Sidecar.html#CloudWatch-Application-Signals-Enable-ECS-IAM).
+
+#### ApplicationSignalsIntegrationProps
 
 |Name |Type |Description |
 |--- |--- |--- |
 |taskDefinition |[ecs.TaskDefinition](https://docs.aws.amazon.com/cdk/api/v2/docs/aws-cdk-lib.aws_ecs.TaskDefinition.html) |The task definition to render. |
 |instrumentation |[InstrumentationProps](#instrumentationprops) |The auto-instrumentation configuration. |
-|serviceName? |string |The serivce identifier in Application Signals.<br>Default: the input task definition name. |
+|serviceName? |string |The serivce identifier in Application Signals.<br>Default: the input task definition family name. |
 |overrideEnvironments? |[EnvironmentExtension](#environmentextension)[] |The Application Signals reserved envrionment variables to overwrite on the main container. For the complete list, see [Environment variables injected by Application Signals auto-instrumentation](#environment-variables-injected-by-application-signals-auto-instrumentation). |
 |cloudWatchAgent? |[CloudWatchAgentProps](#cloudwatchagentprops) |The CloudWatch agent sidecar configuration.<br>Default: enables a basic agent sidecar container with latest public image. |
 
@@ -36,7 +38,7 @@ and attach required IAM permission **CloudWatchAgentServerPolicy** to the Task r
 |Name |Type |Description |
 |--- |--- |--- |
 |instrumentationLanguage |InstrumentationLanguage (enum) |The langugage SDK to be auto-instrumented.<br>One of the following enum values:<br>`JAVA`<br>`PYTHON`<br>`DOTNET`<br>`NODEJS` |
-|sdkVersion |Instrumentation (enum) |The ADOT language SDK version to be used. |
+|sdkVersion |InstrumentationVersion (enum) |The ADOT language SDK version to be used. |
 |runtimePlatform? |[ecs.RuntimePlatform](https://docs.aws.amazon.com/cdk/api/v2/docs/aws-cdk-lib.aws_ecs.RuntimePlatform.html) | The runtime platform.<br>The value inherits from the [ecs.RuntimePlatform](https://docs.aws.amazon.com/cdk/api/v2/docs/aws-cdk-lib.aws_ecs.RuntimePlatform.html) specified through the input task definition or defaults to linux-x64 if it isn't custom defined. |
 
 #### EnvironmentExtension
@@ -162,7 +164,7 @@ along with their potential override values. The default value is noted with `*` 
 new ApplicationSignalsIntegration(this, 'ApplicationSignalsIntegration', taskDefinition, {
   instrumentation: {
     language: InstrumentationLanguage.JAVA,
-    sdkVersion: Instrumentation.JAVA_1_32_6
+    sdkVersion: JavaInstrumentationVersion.V1_32_6
   },
   serviceName: 'sample-app',
   cloudWatchAgent: {
@@ -201,7 +203,7 @@ const cwAgentService = new ecs.Ec2Service(this, 'CwAgentDaemonService', {
 new ApplicationSignalsIntegration(this, 'ApplicationSignalsIntegration', taskDefinition, {
   instrumentation: {
     language: InstrumentationLanguage.PYTHON,
-    sdkVersion: Instrumentation.PYTHON_V0_7_0
+    sdkVersion: PythonInstrumentationVersion.V0_7_0
   },
   overrideEnvironments: [{
     name: constants.CommonExporting.OTEL_AWS_APPLICATION_SIGNALS_EXPORTER_ENDPOINT,
@@ -230,7 +232,7 @@ please configure the runtimePlatform if your application is not running on Linux
 new ApplicationSignalsIntegration(this, 'ApplicationSignalsIntegration', taskDefinition, {
   instrumentation: {
     language: InstrumentationLanguage.DOTNET,
-    sdkVersion: Instrumetnation.DOTNET_V1_4_0,
+    sdkVersion: DotnetInstrumentationVersion.V1_4_0,
     runtimePlatform: {
       operatingSystemFamily: ecs.OperatingSystemFamily.WINDOWS_SERVER_2019_CORE,
       cpuArchitecture: CpuArchitecture.X86_64
@@ -252,7 +254,7 @@ The following example demonstrates how to customize the CloudWatch agent configu
 new ApplicationSignalsIntegration(this, 'ApplicationSignalsIntegration', taskDefinition, {
   instrumentation: {
     language: InstrumentationLanguage.JAVA,
-    sdkVersion: Instrumentation.JAVA_1_32_6
+    sdkVersion: JavaInstrumentationVersion.V1_32_6
   },
   serviceName: 'sample-app',
   cloudWatchAgent: {
@@ -327,7 +329,7 @@ At high level, the customers are required to execute the following steps to onbo
     2. Adding a new non-essential CloudWatch agent sidecar.
         1. *Not required when using CloudWatch agent as daemon on ECS on EC2.*
     3. Adding a new non-essential init container with ADOT auto-instrumentation image.
-    To avoid container name conflicts, the name of the init container will be generated with an unique identifier.
+    To avoid container name conflicts, the name of the init container will be named as `adot-init`.
     4. Adding the required environment variables to the user application container.
     5. Mounting the volume defined in \<2.i\> to the container created in \<2.iii\> and the container updated in \<2.iv\>.
 3. Deploy the application with the updated task definition.
@@ -379,17 +381,18 @@ Other than the original TaskDefinition, the new construct requires essential inf
     2. To decide what value to be set in `CORECLR_PROFILER_PATH`  for .NET applications.
        See [DOTNET Instrumentation Constants](#dotnet-instrumentation-constants)
 
-```js
+```ts
 export enum InstrumentationLanguage {
   JAVA, PYTHON, DOTNET, NODEJS
 }
 
-export enum Instrumentation {
-  // This is just an example, the actual provided versions will be different.
-  JAVA_1_32_6,
-  PYTHON_V0_7_0,
-  DOTNET_V1_4_0,
-  NODEJS_V0_5_0
+export abstract class InstrumentationVersion {
+  public constructor(protected readonly imageRepo: string, protected readonly version: string) {}
+}
+
+export class JavaInstrumentationVersion extends InstrumentationVersion {
+  public static readonly V1_33_0 = new JavaInstrumentationVersion(ADOT_IMAGE_REPO, 'v1.33.0');
+  public static readonly V1_32_6 = new JavaInstrumentationVersion(ADOT_IMAGE_REPO, 'v1.32.6');
 }
 
 export interface InstrumentationProps {
@@ -397,7 +400,7 @@ export interface InstrumentationProps {
   readonly language: InstrumentationLanguage;
 
   // The ADOT language SDK version to be used
-  readonly sdkVersion: Instrumentation;
+  readonly sdkVersion: InstrumentationVersion;
 
   // The OS and CPU architecture used by the Task, defaults to linux-x64
   readonly runtimePlatform?: ecs.RuntimePlatform;
